@@ -1,0 +1,58 @@
+name: Daily README Check-in
+
+on:
+  schedule:
+    - cron: "0 16 * * *"  # 每天 UTC 16点 = 北京时间 0点
+  workflow_dispatch:
+
+env:
+  USERNAME: ${{ secrets.USERNAME }}  # 用户名变量
+
+jobs:
+  daily-checkin:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Append Beijing time to README
+        run: |
+          # 获取北京时间
+          current_time=$(TZ="Asia/Shanghai" date +"%Y-%m-%d %H:%M:%S")
+          echo "🕒 北京时间: $current_time"
+
+          # 检查是否存在 ## record
+          if grep -q "^## record" README.md; then
+            echo "✅ Found '## record', appending below..."
+            awk -v time="- $current_time" '
+              BEGIN{added=0}
+              /^## record/ && added==0 { print; print time; added=1; next }
+              { print }
+            ' README.md > README.tmp && mv README.tmp README.md
+          else
+            echo "⚠️ No '## record' found, appending to the end..."
+            echo -e "\n## record\n- $current_time" >> README.md
+          fi
+
+      - name: Check for changes
+        id: git_status
+        run: |
+          git add README.md
+          if git diff --cached --quiet; then
+            echo "changed=false" >> $GITHUB_OUTPUT
+          else
+            echo "changed=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Commit and push changes
+        if: steps.git_status.outputs.changed == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.PUSH_TOKEN }}
+        run: |
+          git config user.name "${{ env.USERNAME }}"
+          git config user.email "${{ env.USERNAME }}@users.noreply.github.com"
+          git commit -m "chore: daily check-in $(TZ='Asia/Shanghai' date +'%Y-%m-%d %H:%M:%S')"
+          git push "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ env.USERNAME }}/${{ github.event.repository.name }}.git" HEAD:main
